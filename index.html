@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>电网与变电站地图系统</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- 引入 Esri Leaflet 插件以实现在线直读政府 API 接口 -->
+    <script src="https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: Helvetica, Arial, sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        #search-box {
+            position: absolute; 
+            top: 20px; 
+            left: 60px; 
+            z-index: 1000;
+            background: white; 
+            padding: 15px; 
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        input[type="text"] { 
+            width: 300px; 
+            padding: 8px; 
+            font-size: 14px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button { 
+            padding: 8px 15px; 
+            font-size: 14px;
+            cursor: pointer; 
+            background-color: #0078A8;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            margin-left: 5px;
+        }
+        button:hover { background-color: #005A80; }
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            line-height: 24px;
+        }
+        .legend-color {
+            display: inline-block;
+            width: 20px;
+            height: 4px;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <div id="search-box">
+        <input type="text" id="address-input" placeholder="输入任意地址 (例如: 123 Main St, Seattle)">
+        <button onclick="searchAddress()">Zoom In 定位</button>
+    </div>
+    
+    <div class="legend">
+        <div><span class="legend-color" style="background: red;"></span>500 kV</div>
+        <div><span class="legend-color" style="background: orange;"></span>230 kV</div>
+        <div><span class="legend-color" style="background: blue;"></span>110 kV</div>
+        <div><span class="legend-color" style="background: gray;"></span>其他/未知</div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        var map = L.map('map').setView([39.8283, -98.5795], 4);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19, 
+            attribution: 'OpenStreetMap'
+        }).addTo(map);
+
+        // 直接读取美国政府 HIFLD 的高压传输线在线接口
+        L.esri.featureLayer({
+            url: 'https://services1.arcgis.com/Hp6G80Pky0om7QvQ/ArcGIS/rest/services/Electric_Power_Transmission_Lines/FeatureServer/0',
+            style: function (feature) {
+                var voltage = feature.properties.VOLTAGE || 0;
+                var color = 'gray'; 
+                
+                if (voltage >= 500) color = 'red';
+                else if (voltage >= 230 && voltage < 500) color = 'orange';
+                else if (voltage >= 110 && voltage < 230) color = 'blue';
+
+                return { color: color, weight: 3, opacity: 0.8 };
+            }
+        }).addTo(map);
+
+        // 直接读取美国政府 HIFLD 的变电站在线接口
+        L.esri.featureLayer({
+            url: 'https://services.arcgis.com/njFNhDsUCentVYJW/ArcGIS/rest/services/Substations/FeatureServer/0',
+            pointToLayer: function (geojson, latlng) {
+                var voltage = geojson.properties.MAX_VOLT || geojson.properties.MIN_VOLT || geojson.properties.VOLTAGE || 0;
+                var color = 'gray'; 
+                
+                if (voltage >= 500) color = 'red';
+                else if (voltage >= 230 && voltage < 500) color = 'orange';
+                else if (voltage >= 110 && voltage < 230) color = 'blue';
+
+                return L.circleMarker(latlng, {
+                    radius: 6,
+                    fillColor: color,
+                    color: "#000",
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.9
+                });
+            }
+        }).addTo(map);
+
+        var currentMarker = null;
+
+        function searchAddress() {
+            var address = document.getElementById('address-input').value;
+            if (!address) return;
+
+            var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(address);
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.length > 0) {
+                        var lat = parseFloat(data[0].lat);
+                        var lon = parseFloat(data[0].lon);
+                        
+                        map.flyTo([lat, lon], 13, { duration: 1.5 });
+
+                        if (currentMarker) {
+                            map.removeLayer(currentMarker);
+                        }
+
+                        currentMarker = L.marker([lat, lon]).addTo(map)
+                            .bindPopup(address)
+                            .openPopup();
+                    } else {
+                        alert('系统无法解析该地址，请输入包含城市和州的完整信息。');
+                    }
+                })
+                .catch(err => {
+                    console.error('搜索错误:', err);
+                });
+        }
+        
+        document.getElementById("address-input").addEventListener("keypress", function(event) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                searchAddress();
+            }
+        });
+    </script>
+</body>
+</html>
